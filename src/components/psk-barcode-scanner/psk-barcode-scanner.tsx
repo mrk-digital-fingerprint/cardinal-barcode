@@ -4,6 +4,7 @@ import { VideoOverlay } from './overlays';
 import audio from './audio';
 
 const INTERVAL_ZXING_LOADED = 300;
+const INTERVAL_SCANDIT_LOADED = 300;
 const INTERVAL_BETWEEN_SCANS = 2000;
 const DELAY_AFTER_RESULT = 500;
 const STATUS = {
@@ -36,7 +37,9 @@ export class PskBarcodeScanner {
     propertyType: `string`
   })
   @Prop() title: string = '';
+  @Prop() useScandit: boolean = false;
 
+  @State() ScanditSDK = null;
   @State() ZXing = null;
   @State() activeDeviceId: string | null = null;
   @State() status = STATUS.IN_PROGRESS;
@@ -139,12 +142,50 @@ export class PskBarcodeScanner {
 
   async componentWillLoad() {
     let tick = () => {
-      if (window['ZXing'] && !this.ZXing && !this.codeReader) {
-        this.ZXing = window['ZXing'];
-        this.codeReader = new this.ZXing.BrowserMultiFormatReader(null, INTERVAL_BETWEEN_SCANS);
+      if (!this.useScandit) {
+        if (window['ZXing'] && !this.ZXing && !this.codeReader) {
+          this.ZXing = window['ZXing'];
+          this.codeReader = new this.ZXing.BrowserMultiFormatReader(null, INTERVAL_BETWEEN_SCANS);
+        } else {
+          setTimeout(tick, INTERVAL_ZXING_LOADED);
+        }
       } else {
-        setTimeout(tick, INTERVAL_ZXING_LOADED);
+        if (window['ScanditSDK'] && !this.ScanditSDK && !this.codeReader) {
+          const defaultScanSettings = {
+            enabledSymbologies: ["databar-limited", "micropdf417"],
+            maxNumberOfCodesPerFrame: 2
+          }
+
+          const createNewBarcodePicker = (scanSettings = defaultScanSettings) => {
+            return window['ScanditSDK'].BarcodePicker.create(document.getElementById("scandit-barcode-picker"), {
+              scanSettings: new window['ScanditSDK'].ScanSettings(scanSettings),
+            })
+          }
+
+          const newBarcodePickerCallback = (barcodePicker) => {
+            // barcodePicker is ready here, show a message every time a barcode is scanned
+            barcodePicker.on("scan", (scanResult) => {
+              console.log(scanResult)
+              if (scanResult.barcodes.length === 2) {
+                alert('Composite code scan successfull.')
+              }
+            });
+          }
+
+          this.ScanditSDK = window['ScanditSDK'].configure("api-key", {
+            engineLocation: `${this.cardinalPath}/libs/scandit/engine/`,
+          })
+            .then(() => {
+              return createNewBarcodePicker()
+            })
+            .then(newBarcodePickerCallback);
+        }
+        else {
+          setTimeout(tick, INTERVAL_SCANDIT_LOADED);
+        }
+
       }
+
     };
 
     tick();
@@ -152,8 +193,14 @@ export class PskBarcodeScanner {
 
   async componentWillRender() {
     // ZXing unloaded
-    if (!this.ZXing) {
-      return;
+    if (!this.useScandit) {
+      if (!this.ZXing) {
+        return;
+      }
+    } else {
+      if (!this.ScanditSDK) {
+        return;
+      }
     }
 
     // No devices yet
@@ -173,8 +220,10 @@ export class PskBarcodeScanner {
   }
 
   async componentDidRender() {
-    if (this.isCameraAvailable && !this.isComponentDisconnected) {
-      this.startScanning(this.activeDeviceId);
+    if (!this.useScandit) {
+      if (this.isCameraAvailable && !this.isComponentDisconnected) {
+        this.startScanning(this.activeDeviceId);
+      }
     }
   }
 
@@ -188,6 +237,13 @@ export class PskBarcodeScanner {
     if (this.codeReader) {
       this.codeReader.reset();
     }
+  }
+
+  get cardinalPath(): string {
+    return (window.cardinal && window.cardinal.extended
+        ? window.cardinal.extended + '/barcode'
+        : 'cardinal/extended/barcode'
+    );
   }
 
   render() {
@@ -219,24 +275,25 @@ export class PskBarcodeScanner {
         fontSize: '15px'
       }
     }
-    const cardinal = (window.cardinal && window.cardinal.extended
-        ? window.cardinal.extended + '/barcode'
-        : 'cardinal/extended/barcode'
-    );
 
-    return [
-      <script async src={`${cardinal}/libs/zxing.js`}/>,
+
+    return this.useScandit ? [
+      <script async src={`${this.cardinalPath}/libs/scandit/index.min.js`}/>,
+      <div id="scandit-barcode-picker" style="max-width: 1280px; max-height: 80%;"></div>
+
+    ] : [
+      <script async src={`${this.cardinalPath}/libs/zxing.js`}/>,
       <div title={this.title} style={style.barcodeWrapper}>
         {
           this.isCameraAvailable && !this.isScanDone
-          ? (
-            <div id="scanner-container" style={style.videoWrapper}>
-              <input type="file" accept="video/*" capture="camera" style={style.input}/>
-              <video id="video" muted autoplay playsinline={true} style={style.video}/>
-              <button onClick={_ => this.switchCamera()} style={style.button}>Change camera</button>
-            </div>
-          )
-          : <div>{this.status}</div>
+            ? (
+              <div id="scanner-container" style={style.videoWrapper}>
+                <input type="file" accept="video/*" capture="camera" style={style.input}/>
+                <video id="video" muted autoplay playsinline={true} style={style.video}/>
+                <button onClick={_ => this.switchCamera()} style={style.button}>Change camera</button>
+              </div>
+            )
+            : <div>{this.status}</div>
         }
       </div>
     ];
